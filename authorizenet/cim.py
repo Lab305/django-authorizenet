@@ -65,7 +65,7 @@ def create_form_data(data):
 
 def add_profile(customer_id, payment_form_data, billing_form_data,
                 shipping_form_data=None, customer_email=None,
-                customer_description=None):
+                customer_description=None, login_name=None, transaction_key=None):
     """
     Add a customer profile with a single payment profile
     and return a tuple of the CIMResponse, profile ID,
@@ -85,7 +85,8 @@ def add_profile(customer_id, payment_form_data, billing_form_data,
               'credit_card_data': extract_payment_form_data(payment_form_data),
               'billing_data': extract_form_data(billing_form_data),
               'customer_email': customer_email,
-              'customer_description': customer_description}
+              'customer_description': customer_description,
+              'login_name': login_name, 'transaction_key': transaction_key}
     if shipping_form_data:
         kwargs['shipping_data'] = extract_form_data(shipping_form_data)
     helper = CreateProfileRequest(**kwargs)
@@ -136,7 +137,7 @@ def update_payment_profile(profile_id,
     return response
 
 
-def create_payment_profile(profile_id, payment_form_data, billing_form_data):
+def create_payment_profile(profile_id, payment_form_data, billing_form_data, login_name=None, transaction_key=None):
     """
     Create a customer payment profile and return a tuple of the CIMResponse and
     payment profile ID.
@@ -150,7 +151,7 @@ def create_payment_profile(profile_id, payment_form_data, billing_form_data):
     billing_data = extract_form_data(billing_form_data)
     helper = CreatePaymentProfileRequest(profile_id,
                                          billing_data,
-                                         payment_data)
+                                         payment_data, login_name, transaction_key)
     response = helper.get_response()
     if response.success:
         payment_profile_id = helper.payment_profile_id
@@ -159,7 +160,7 @@ def create_payment_profile(profile_id, payment_form_data, billing_form_data):
     return {'response': response, 'payment_profile_id': payment_profile_id}
 
 
-def delete_payment_profile(profile_id, payment_profile_id):
+def delete_payment_profile(profile_id, payment_profile_id, login_name, transaction_key):
     """
     Delete a customer payment profile and return the CIMResponse.
 
@@ -167,7 +168,7 @@ def delete_payment_profile(profile_id, payment_profile_id):
     profile_id -- unique gateway-assigned profile identifier
     payment_profile_id -- unique gateway-assigned payment profile identifier
     """
-    helper = DeletePaymentProfileRequest(profile_id, payment_profile_id)
+    helper = DeletePaymentProfileRequest(profile_id, payment_profile_id, login_name, transaction_key)
     response = helper.get_response()
     return response
 
@@ -224,7 +225,7 @@ def delete_shipping_profile(profile_id, shipping_profile_id):
     return response
 
 
-def get_profile(profile_id):
+def get_profile(profile_id, login_name, transaction_key):
     """
     Retrieve a customer payment profile from the profile ID and return a tuple
     of the CIMResponse and two lists of dictionaries containing data for each
@@ -233,7 +234,7 @@ def get_profile(profile_id):
     Arguments:
     profile_id -- unique gateway-assigned profile identifier
     """
-    helper = GetProfileRequest(profile_id)
+    helper = GetProfileRequest(profile_id, login_name, transaction_key)
     response = helper.get_response()
     return {'response': response,
             'payment_profiles': helper.payment_profiles,
@@ -263,14 +264,14 @@ class BaseRequest(object):
     Abstract class used by all CIM request types
     """
 
-    def __init__(self, action):
-        self.create_base_document(action)
+    def __init__(self, action, login_name, transaction_key):
+        self.create_base_document(action, login_name, transaction_key)
         if settings.AUTHNET_DEBUG:
             self.endpoint = AUTHNET_TEST_CIM_URL
         else:
             self.endpoint = AUTHNET_CIM_URL
 
-    def create_base_document(self, action):
+    def create_base_document(self, action, login_name, transaction_key):
         """
         Create base document and root node and store them in self.document
         and self.root respectively.  The root node is created based on the
@@ -285,9 +286,8 @@ class BaseRequest(object):
 
         self.document = doc
         authentication = doc.createElement("merchantAuthentication")
-        name = self.get_text_node("name", settings.AUTHNET_LOGIN_ID)
-        key = self.get_text_node("transactionKey",
-                                 settings.AUTHNET_TRANSACTION_KEY)
+        name = self.get_text_node("name", login_name)
+        key = self.get_text_node("transactionKey", transaction_key)
         authentication.appendChild(name)
         authentication.appendChild(key)
         root.appendChild(authentication)
@@ -426,14 +426,21 @@ class CreateProfileRequest(BasePaymentProfileRequest,
                            BaseShippingProfileRequest):
     def __init__(self, customer_id=None, customer_email=None,
                  customer_description=None, billing_data=None,
-                  shipping_data=None,credit_card_data=None):
+                  shipping_data=None,credit_card_data=None,
+                  login_name=None, transaction_key=None
+                  ):
+        print "In INIT"
         if not (customer_id or customer_email or customer_description):
             raise ValueError("%s requires one of 'customer_id', \
                              customer_email or customer_description"
                              % self.__class__.__name__)
 
+        print "Create Profile Request"
+        print login_name
+        print transaction_key
+
         super(CreateProfileRequest,
-              self).__init__("createCustomerProfileRequest")
+              self).__init__("createCustomerProfileRequest", login_name, transaction_key)
         # order is important here, and OrderedDict not available < Python 2.7
         self.customer_info = SortedDict()
         self.customer_info['merchantCustomerId'] = customer_id
@@ -511,9 +518,9 @@ class UpdatePaymentProfileRequest(BasePaymentProfileRequest):
 
 
 class CreatePaymentProfileRequest(BasePaymentProfileRequest):
-    def __init__(self, profile_id, billing_data=None, credit_card_data=None):
+    def __init__(self, profile_id, billing_data=None, credit_card_data=None, login_name=None, transaction_key=None):
         super(CreatePaymentProfileRequest,
-                self).__init__("createCustomerPaymentProfileRequest")
+                self).__init__("createCustomerPaymentProfileRequest", login_name, transaction_key)
         profile_id_node = self.get_text_node("customerProfileId", profile_id)
         payment_profile = self.get_payment_profile_node(billing_data,
                                                         credit_card_data,
@@ -530,9 +537,9 @@ class CreatePaymentProfileRequest(BasePaymentProfileRequest):
 
 
 class DeletePaymentProfileRequest(BasePaymentProfileRequest):
-    def __init__(self, profile_id, payment_profile_id):
+    def __init__(self, profile_id, payment_profile_id, login_name, transaction_key):
         super(DeletePaymentProfileRequest,
-                self).__init__("deleteCustomerPaymentProfileRequest")
+                self).__init__("deleteCustomerPaymentProfileRequest", login_name, transaction_key)
         profile_id_node = self.get_text_node("customerProfileId", profile_id)
         payment_profile_id_node = self.get_text_node(
                 "customerPaymentProfileId",
@@ -590,8 +597,8 @@ class DeleteShippingProfileRequest(BaseShippingProfileRequest):
 
 
 class GetProfileRequest(BaseRequest):
-    def __init__(self, profile_id):
-        super(GetProfileRequest, self).__init__("getCustomerProfileRequest")
+    def __init__(self, profile_id, login_name, transaction_key):
+        super(GetProfileRequest, self).__init__("getCustomerProfileRequest", login_name, transaction_key)
         profile_id_node = self.get_text_node("customerProfileId", profile_id)
         self.root.appendChild(profile_id_node)
 
